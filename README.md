@@ -247,3 +247,15 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ---
 
 **Ready for production deployment with Ubuntu 24.04 and Contabo VPS!** 🚀
+
+## 🔑 Credentials
+
+The following credentials can be used to connect to the server:
+
+- **SSH**
+  - Host: 109.205.181.119
+  - User: mlmapp
+  - Password: 4K-6GsnA$3pQ5931
+
+- **Domain**
+  - Domain: extremelifeherbal.com

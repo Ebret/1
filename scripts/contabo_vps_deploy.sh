@@ -13,23 +13,47 @@ PURPLE='\033[0;35m'
 NC='\033[0m' # No Color
 
 # Configuration
-PROJECT_NAME="umd-drupal"
-PROJECT_DIR="/var/www/html/umd"
-DB_NAME="drupal_umd_prod"
-DB_USER="drupal_prod"
-DB_PASS="UMD_$(openssl rand -base64 12 | tr -d '=+/' | cut -c1-16)"
+# Load configuration from file
+CONFIG_FILE="$(cd "$(dirname "$0")" && pwd)/contabo_vps_deploy.conf"
+if [ -f "$CONFIG_FILE" ]; then
+  source "$CONFIG_FILE"
+else
+  print_error "Configuration file not found: $CONFIG_FILE"
+  print_status "Please create contabo_vps_deploy.conf in the scripts directory."
+  exit 1
+fi
+
+# Prompt user for database password
+read -s -p "Enter the database password: " DB_PASS
+echo
+
+# Ensure variables are readonly
+readonly PROJECT_NAME="${PROJECT_NAME}"
+readonly PROJECT_DIR="${PROJECT_DIR}"
+readonly DB_NAME="${DB_NAME}"
+readonly DB_USER="${DB_USER}"
+readonly DB_PASS="${DB_PASS}"
+
+# Domain and email (for SSL) - these will be obtained from user input
 DOMAIN=""
 EMAIL=""
 
-# Contabo VPS optimizations
-CONTABO_OPTIMIZATIONS=true
-ENABLE_SSL=true
-ENABLE_MONITORING=true
-ENABLE_BACKUPS=true
+# Feature flags
+readonly CONTABO_OPTIMIZATIONS="${CONTABO_OPTIMIZATIONS}"
+readonly ENABLE_SSL="${ENABLE_SSL}"
+readonly ENABLE_MONITORING="${ENABLE_MONITORING}"
+readonly ENABLE_BACKUPS="${ENABLE_BACKUPS}"
+readonly INSTALL_APACHE="${INSTALL_APACHE}"
+readonly INSTALL_MYSQL="${INSTALL_MYSQL}"
+readonly INSTALL_PHP="${INSTALL_PHP}"
+readonly INSTALL_COMPOSER="${INSTALL_COMPOSER}"
+readonly INSTALL_NODEJS="${INSTALL_NODEJS}"
 
 # Function to print colored output
 print_status() {
-    echo -e "${BLUE}[CONTABO-DEPLOY]${NC} $1"
+    timestamp=$(date +%Y-%m-%d_%H:%M:%S)
+    echo -e "${BLUE}[CONTABO-DEPLOY]${NC} [$timestamp] $1"
+    echo "[$timestamp] $1" >> /var/log/contabo-deploy.log
 }
 
 print_success() {
@@ -52,74 +76,85 @@ print_header() {
 
 # Function to check if running as root
 check_root() {
+    print_status "Starting check_root function"
     if [[ $EUID -ne 0 ]]; then
         print_error "This script must be run as root on Contabo VPS"
         print_status "Please run: sudo $0"
         exit 1
     fi
+    print_status "Finished check_root function"
 }
 
 # Function to get user input
-get_user_input() {
+get_user_configuration() {
+    print_status "Starting get_user_configuration function"
+    set -o errexit # Exit on error
     print_header "Contabo VPS Configuration"
-    
+
     # Get domain name
     while [[ -z "$DOMAIN" ]]; do
         read -p "Enter your domain name (e.g., yourdomain.com): " DOMAIN
-        if [[ ! "$DOMAIN" =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$ ]]; then
+        if [[ ! "$DOMAIN" =~ ^([a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,})$ ]]; then
             print_warning "Please enter a valid domain name"
             DOMAIN=""
         fi
     done
-    
+
     # Get email for SSL
     while [[ -z "$EMAIL" ]]; do
         read -p "Enter your email for SSL certificate: " EMAIL
-        if [[ ! "$EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+        if [[ ! "$EMAIL" =~ ^([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})$ ]]; then
             print_warning "Please enter a valid email address"
             EMAIL=""
         fi
     done
-    
+
     print_success "Configuration set:"
     echo "  Domain: $DOMAIN"
     echo "  Email: $EMAIL"
     echo "  Database: $DB_NAME"
     echo "  DB User: $DB_USER"
     echo "  DB Password: $DB_PASS"
+    echo "$(date) - Configuration set" >> /var/log/contabo-deploy.log
 }
 
-# Function to detect Contabo VPS
+# Function to detect Contabo VPS using dmidecode
 detect_contabo() {
+    print_status "Starting detect_contabo function"
+    set -o errexit # Exit on error
     print_status "Detecting Contabo VPS environment..."
-    
-    # Check for Contabo-specific indicators
-    if grep -q "contabo" /proc/version 2>/dev/null || \
-       grep -q "contabo" /etc/hostname 2>/dev/null || \
-       [[ $(hostname) == *"contabo"* ]]; then
-        print_success "Contabo VPS detected"
+
+    # Use dmidecode to check for Contabo-specific identifiers
+    if ! dmidecode | grep -q "Manufacturer: Contabo GmbH"; then
+        print_warning "Contabo VPS not detected using dmidecode."
+        print_status "Continuing with the deployment, but some optimizations might not be applied."
+    else
+        print_success "Contabo VPS detected (dmidecode)"
+        echo "$(date) - Contabo VPS detected (dmidecode)" >> /var/log/contabo-deploy.log
         return 0
     fi
-    
-    # Check IP ranges (Contabo uses specific ranges)
-    PUBLIC_IP=$(curl -s ifconfig.me || curl -s ipinfo.io/ip)
-    if [[ "$PUBLIC_IP" =~ ^(213\.239\.|5\.189\.|207\.180\.|144\.76\.) ]]; then
-        print_success "Contabo IP range detected: $PUBLIC_IP"
-        return 0
-    fi
-    
-    print_warning "Contabo VPS not definitively detected, but continuing..."
+
     return 0
 }
 
 # Function to optimize for Contabo VPS
-optimize_for_contabo() {
-    if [[ "$CONTABO_OPTIMIZATIONS" != "true" ]]; then
+optimize_contabo() {
+    print_status "Starting optimize_contabo function"
+    set -o errexit # Exit on error
+
+    # Check if optimizations have already been applied
+    if grep -q "Contabo VPS Network Optimizations" /etc/sysctl.conf; then
+        print_status "Contabo VPS optimizations already applied, skipping..."
         return 0
     fi
-    
+
+    if [[ "$CONTABO_OPTIMIZATIONS" != "true" ]]; then
+        print_status "Skipping Contabo VPS optimizations..."
+        return 0
+    fi
+
     print_status "Applying Contabo VPS optimizations..."
-    
+
     # Network optimizations for Contabo infrastructure
     cat >> /etc/sysctl.conf << EOF
 
@@ -136,112 +171,167 @@ vm.swappiness = 10
 vm.vfs_cache_pressure = 50
 vm.dirty_ratio = 15
 vm.dirty_background_ratio = 5
+vm.dirty_background_ratio = 5
 EOF
-    
+
     sysctl -p
-    
+    echo "$(date) - Applied sysctl settings" >> /var/log/contabo-deploy.log
+
     # Optimize for Contabo's NVMe SSD storage
     echo 'deadline' > /sys/block/sda/queue/scheduler 2>/dev/null || true
-    
+    echo "$(date) - Set scheduler to deadline" >> /var/log/contabo-deploy.log
+
     print_success "Contabo optimizations applied"
+    echo "$(date) - Contabo optimizations applied" >> /var/log/contabo-deploy.log
+}
+
+# Function to install packages
+install_packages() {
+    print_status "Starting install_packages function"
+    local package_list="$1"
+    print_status "Installing packages: $package_list"
+    apt install -y $package_list
+    if [ $? -ne 0 ]; then
+        print_error "Failed to install packages: $package_list"
+        exit 1
+    fi
+}
+
+# Function to update system
+update_system() {
+    print_status "Starting update_system function"
+    print_status "Updating system..."
+    apt update
+    if [ $? -ne 0 ]; then
+        print_error "Failed to update system"
+        exit 1
+    fi
+    apt upgrade -y
+    if [ $? -ne 0 ]; then
+        print_error "Failed to upgrade system"
+        exit 1
+    fi
 }
 
 # Function to install base system
-install_base_system() {
+install_base_packages() {
+    print_status "Starting install_base_packages function"
     print_status "Installing base system for Contabo VPS..."
-    
+
     # Update system
-    apt update
-    apt upgrade -y
-    
+    update_system
+
     # Install essential packages
-    apt install -y \
-        curl \
-        wget \
-        git \
-        unzip \
-        software-properties-common \
-        apt-transport-https \
-        ca-certificates \
-        gnupg \
-        lsb-release \
-        htop \
-        iotop \
-        nethogs \
-        tree \
-        vim \
-        fail2ban \
-        ufw
-    
+    local base_packages="curl wget git unzip software-properties-common apt-transport-https ca-certificates gnupg lsb-release htop iotop nethogs tree vim fail2ban ufw"
+    install_packages "$base_packages"
+
     print_success "Base system installed"
+    echo "$(date) - Base system installed" >> /var/log/contabo-deploy.log
 }
 
 # Function to install LAMP stack
-install_lamp_stack() {
+install_lamp() {
+    print_status "Starting install_lamp function"
     print_status "Installing LAMP stack optimized for Contabo..."
-    
+
     # Install Apache
-    apt install -y apache2
-    
+    if [[ "$INSTALL_APACHE" == "true" ]]; then
+        print_status "Installing Apache..."
+        install_packages "apache2"
+    else
+        print_status "Skipping Apache installation..."
+    fi
+
     # Install MySQL
-    apt install -y mysql-server
-    
+    if [[ "$INSTALL_MYSQL" == "true" ]]; then
+        print_status "Installing MySQL..."
+        install_packages "mysql-server"
+    else
+        print_status "Skipping MySQL installation..."
+    fi
+
     # Install PHP 8.3 and extensions
-    apt install -y \
-        php8.3 \
-        php8.3-cli \
-        php8.3-fpm \
-        php8.3-mysql \
-        php8.3-gd \
-        php8.3-curl \
-        php8.3-mbstring \
-        php8.3-xml \
-        php8.3-zip \
-        php8.3-sqlite3 \
-        php8.3-intl \
-        php8.3-bcmath \
-        php8.3-opcache \
-        php8.3-soap \
-        php8.3-xsl \
-        libapache2-mod-php8.3
-    
+    if [[ "$INSTALL_PHP" == "true" ]]; then
+        print_status "Installing PHP..."
+        local php_packages="php8.3 php8.3-cli php8.3-fpm php8.3-mysql php8.3-gd php8.3-curl php8.3-mbstring php8.3-xml php8.3-zip php8.3-sqlite3 php8.3-intl php8.3-bcmath php8.3-opcache php8.3-soap php8.3-xsl libapache2-mod-php8.3"
+        install_packages "$php_packages"
+    else
+        print_status "Skipping PHP installation..."
+    fi
+
     # Install Composer
-    curl -sS https://getcomposer.org/installer | php
-    mv composer.phar /usr/local/bin/composer
-    chmod +x /usr/local/bin/composer
-    
+    if [[ "$INSTALL_COMPOSER" == "true" ]]; then
+        if ! command -v composer &> /dev/null; then
+            print_status "Installing Composer"
+            curl -sS https://getcomposer.org/installer | php
+            if [ $? -eq 0 ]; then
+                mv composer.phar /usr/local/bin/composer
+                chmod +x /usr/local/bin/composer
+                echo "$(date) - Installed Composer" >> /var/log/contabo-deploy.log
+            else
+                print_error "Failed to install Composer."
+                print_status "Please check your internet connection and try again."
+            fi
+        else
+            echo "$(date) - Composer already installed, skipping" >> /var/log/contabo-deploy.log
+        fi
+    else
+        print_status "Skipping Composer installation..."
+    fi
+
     # Install Node.js (for Drupal frontend tools)
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-    apt install -y nodejs
-    
+    if [[ "$INSTALL_NODEJS" == "true" ]]; then
+        print_status "Installing Node.js"
+        curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+        if [ $? -eq 0 ]; then
+            install_packages "nodejs"
+        else
+            print_error "Failed to add Node.js repository."
+            print_status "Please check your internet connection and try again."
+        fi
+    else
+        print_status "Skipping Node.js installation..."
+    fi
+
     print_success "LAMP stack installed"
+    echo "$(date) - LAMP stack installed" >> /var/log/contabo-deploy.log
 }
 
-# Function to configure Apache for Contabo
-configure_apache() {
+# Function to configure Apache virtual host
+configure_apache_vhost() {
+    print_status "Starting configure_apache_vhost function"
+    set -o errexit # Exit on error
+
+    # Check if virtual host already exists
+    if [ -f /etc/apache2/sites-available/${PROJECT_NAME}.conf ]; then
+        print_status "Apache virtual host already configured, skipping..."
+        return 0
+    fi
+
     print_status "Configuring Apache for Contabo VPS..."
-    
+
     # Enable required modules
     a2enmod rewrite ssl headers deflate expires php8.3
-    
+    echo "$(date) - Enabled Apache modules" >> /var/log/contabo-deploy.log
+
     # Create optimized virtual host
     cat > /etc/apache2/sites-available/${PROJECT_NAME}.conf << EOF
 <VirtualHost *:80>
     ServerName ${DOMAIN}
     ServerAlias www.${DOMAIN}
     DocumentRoot ${PROJECT_DIR}/drupal-cms/web
-    
+
     <Directory ${PROJECT_DIR}/drupal-cms/web>
         AllowOverride All
         Require all granted
         Options -Indexes +FollowSymLinks
-        
+
         # Security headers
         Header always set X-Content-Type-Options nosniff
         Header always set X-Frame-Options DENY
         Header always set X-XSS-Protection "1; mode=block"
         Header always set Referrer-Policy "strict-origin-when-cross-origin"
-        
+
         # Performance optimizations
         ExpiresActive On
         ExpiresByType text/css "access plus 1 month"
@@ -252,18 +342,24 @@ configure_apache() {
         ExpiresByType image/gif "access plus 1 month"
         ExpiresByType image/svg+xml "access plus 1 month"
     </Directory>
-    
+
     # Logging optimized for Contabo
-    ErrorLog \${APACHE_LOG_DIR}/${PROJECT_NAME}_error.log
-    CustomLog \${APACHE_LOG_DIR}/${PROJECT_NAME}_access.log combined
+    ErrorLog ${APACHE_LOG_DIR}/${PROJECT_NAME}_error.log
+    CustomLog ${APACHE_LOG_DIR}/${PROJECT_NAME}_access.log combined
     LogLevel warn
 </VirtualHost>
 EOF
-    
+    echo "$(date) - Created virtual host file" >> /var/log/contabo-deploy.log
+
     # Enable the site
     a2ensite ${PROJECT_NAME}.conf
-    a2dissite 000-default.conf
-    
+    if a2dissite 000-default.conf; then
+      echo "$(date) - Disabled default site" >> /var/log/contabo-deploy.log
+    else
+      echo "$(date) - Default site already disabled" >> /var/log/contabo-deploy.log
+    fi
+    echo "$(date) - Enabled site and disabled default site" >> /var/log/contabo-deploy.log
+
     # Optimize Apache for Contabo VPS resources
     cat > /etc/apache2/conf-available/contabo-optimization.conf << EOF
 # Contabo VPS Apache Optimizations
@@ -289,34 +385,54 @@ LoadModule deflate_module modules/mod_deflate.so
     SetEnvIfNoCase Request_URI \
         \.(?:gif|jpe?g|png)$ no-gzip dont-vary
     SetEnvIfNoCase Request_URI \
-        \.(?:exe|t?gz|zip|bz2|sit|rar)$ no-gzip dont-vary
+        \.(exe|t?gz|zip|bz2|sit|rar)$ no-gzip dont-vary
 </Location>
 EOF
-    
+    echo "$(date) - Created Apache optimization file" >> /var/log/contabo-deploy.log
+
     a2enconf contabo-optimization
+    echo "$(date) - Enabled Apache optimization" >> /var/log/contabo-deploy.log
     systemctl restart apache2
     systemctl enable apache2
-    
+    echo "$(date) - Restarted and enabled Apache" >> /var/log/contabo-deploy.log
+
     print_success "Apache configured for Contabo VPS"
+    echo "$(date) - Apache configured for Contabo VPS" >> /var/log/contabo-deploy.log
 }
 
 # Function to configure MySQL
-configure_mysql() {
+configure_mysql_server() {
+    print_status "Starting configure_mysql_server function"
+    set -o errexit # Exit on error
+
+    # Check if database already exists
+    mysql -u root -p${DB_PASS} -e "SHOW DATABASES LIKE '${DB_NAME}'" | grep -q "${DB_NAME}"
+    if [ $? -eq 0 ]; then
+        print_status "MySQL database already configured, skipping..."
+        return 0
+    fi
+
     print_status "Configuring MySQL for production..."
-    
+
     # Secure MySQL installation
     mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '${DB_PASS}';"
     mysql -u root -p${DB_PASS} -e "DELETE FROM mysql.user WHERE User='';"
     mysql -u root -p${DB_PASS} -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');"
     mysql -u root -p${DB_PASS} -e "DROP DATABASE IF EXISTS test;"
     mysql -u root -p${DB_PASS} -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';"
-    
+    echo "$(date) - Secured MySQL installation" >> /var/log/contabo-deploy.log
+
     # Create production database and user
     mysql -u root -p${DB_PASS} -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME};"
     mysql -u root -p${DB_PASS} -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';"
     mysql -u root -p${DB_PASS} -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
     mysql -u root -p${DB_PASS} -e "FLUSH PRIVILEGES;"
-    
+    echo "$(date) - Created database and user" >> /var/log/contabo-deploy.log
+
+    # Remove anonymous users
+    mysql -u root -p${DB_PASS} -e "DELETE FROM mysql.user WHERE User='';"
+    echo "$(date) - Removed anonymous users" >> /var/log/contabo-deploy.log
+
     # Optimize MySQL for Contabo VPS
     cat >> /etc/mysql/mysql.conf.d/contabo-optimization.cnf << EOF
 [mysqld]
@@ -331,17 +447,22 @@ max_connections = 100
 thread_cache_size = 8
 table_open_cache = 2000
 EOF
-    
+    echo "$(date) - Created MySQL optimization file" >> /var/log/contabo-deploy.log
+
     systemctl restart mysql
     systemctl enable mysql
-    
+    echo "$(date) - Restarted and enabled MySQL" >> /var/log/contabo-deploy.log
+
     print_success "MySQL configured for production"
+    echo "$(date) - MySQL configured for production" >> /var/log/contabo-deploy.log
 }
 
 # Function to optimize PHP
-optimize_php() {
+optimize_php_settings() {
+    print_status "Starting optimize_php_settings function"
+    set -o errexit # Exit on error
     print_status "Optimizing PHP for Contabo VPS..."
-    
+
     # Create production PHP configuration
     cat > /etc/php/8.3/apache2/conf.d/99-contabo-drupal.ini << EOF
 ; Contabo VPS PHP Optimizations for Drupal
@@ -372,40 +493,61 @@ session.cookie_secure = 1
 realpath_cache_size = 4096K
 realpath_cache_ttl = 600
 EOF
-    
+    echo "$(date) - Created PHP configuration file" >> /var/log/contabo-deploy.log
+
     # Copy to CLI configuration
     cp /etc/php/8.3/apache2/conf.d/99-contabo-drupal.ini /etc/php/8.3/cli/conf.d/
-    
+    echo "$(date) - Copied PHP configuration to CLI" >> /var/log/contabo-deploy.log
+
     systemctl restart apache2
-    
+    echo "$(date) - Restarted Apache" >> /var/log/contabo-deploy.log
+
     print_success "PHP optimized for Contabo VPS"
+    echo "$(date) - PHP optimized for Contabo VPS" >> /var/log/contabo-deploy.log
 }
 
 # Function to setup SSL with Let's Encrypt
-setup_ssl() {
+setup_letsencrypt_ssl() {
+    print_status "Starting setup_letsencrypt_ssl function"
+    set -o errexit # Exit on error
     if [[ "$ENABLE_SSL" != "true" ]]; then
+        print_status "Skipping Let's Encrypt SSL setup..."
         return 0
     fi
-    
+
     print_status "Setting up SSL certificate with Let's Encrypt..."
-    
+
     # Install Certbot
     apt install -y certbot python3-certbot-apache
-    
+    if [ $? -ne 0 ]; then
+        print_error "Failed to install Certbot"
+        exit 1
+    fi
+    echo "$(date) - Installed Certbot" >> /var/log/contabo-deploy.log
+
     # Get SSL certificate
     certbot --apache --non-interactive --agree-tos --email ${EMAIL} -d ${DOMAIN} -d www.${DOMAIN}
-    
+    if [ $? -ne 0 ]; then
+        print_error "Failed to obtain SSL certificate"
+        exit 1
+    fi
+    echo "$(date) - Obtained SSL certificate" >> /var/log/contabo-deploy.log
+
     # Set up auto-renewal
     systemctl enable certbot.timer
     systemctl start certbot.timer
-    
+    echo "$(date) - Enabled and started Certbot timer" >> /var/log/contabo-deploy.log
+
     print_success "SSL certificate installed and auto-renewal configured"
+    echo "$(date) - SSL certificate installed and auto-renewal configured" >> /var/log/contabo-deploy.log
 }
 
 # Function to configure security
-configure_security() {
+configure_firewall_security() {
+    print_status "Starting configure_firewall_security function"
+    set -o errexit # Exit on error
     print_status "Configuring security for Contabo VPS..."
-    
+
     # Configure UFW firewall
     ufw --force reset
     ufw default deny incoming
@@ -414,7 +556,12 @@ configure_security() {
     ufw allow http
     ufw allow https
     ufw --force enable
-    
+    if [ $? -ne 0 ]; then
+        print_error "Failed to configure UFW firewall"
+        exit 1
+    fi
+    echo "$(date) - Configured UFW firewall" >> /var/log/contabo-deploy.log
+
     # Configure fail2ban
     cat > /etc/fail2ban/jail.local << EOF
 [DEFAULT]
@@ -438,223 +585,191 @@ logpath = /var/log/apache2/*error.log
 enabled = true
 port = http,https
 filter = apache-badbots
-logpath = /var/log/apache2/*access.log
 EOF
-    
-    systemctl restart fail2ban
-    systemctl enable fail2ban
-    
-    print_success "Security configured"
+    echo "$(date) - Configured fail2ban" >> /var/log/contabo-deploy.log
+
+    print_success "Security configured for Contabo VPS"
+    print_status "Finished configure_firewall_security function"
 }
 
-# Function to deploy Drupal project
-deploy_drupal() {
-    print_status "Deploying UMD Drupal project..."
-    
-    # Create project directory
-    mkdir -p ${PROJECT_DIR}
-    cd ${PROJECT_DIR}
-    
-    # Clone project (assuming it's available in a repository)
-    # For now, we'll create the structure
-    mkdir -p drupal-cms
-    cd drupal-cms
-    
-    # This would typically be:
-    # git clone https://github.com/your-username/umd-drupal-project.git .
-    # git checkout ubuntu-24-04-compatibility
-    
-    print_warning "Please clone your UMD Drupal project to ${PROJECT_DIR}/drupal-cms"
-    print_status "Then run: composer install --no-dev --optimize-autoloader"
-    
-    # Set proper ownership and permissions
-    chown -R www-data:www-data ${PROJECT_DIR}
-    chmod -R 755 ${PROJECT_DIR}
-    
-    print_success "Drupal deployment structure ready"
-}
-
-# Function to setup monitoring
-setup_monitoring() {
+# Function to install and configure monitoring
+configure_monitoring() {
+    print_status "Starting configure_monitoring function"
     if [[ "$ENABLE_MONITORING" != "true" ]]; then
+        print_status "Skipping monitoring setup..."
         return 0
     fi
-    
-    print_status "Setting up monitoring for Contabo VPS..."
-    
-    # Install monitoring tools
-    apt install -y htop iotop nethogs vnstat
-    
-    # Create monitoring script
-    cat > /usr/local/bin/contabo-monitor.sh << 'EOF'
-#!/bin/bash
-# Contabo VPS Monitoring Script
 
-echo "=== Contabo VPS Status Report ==="
-echo "Date: $(date)"
-echo "Hostname: $(hostname)"
-echo "Uptime: $(uptime)"
-echo ""
+    # Check if monitoring is already installed
+    if systemctl is-active --quiet netdata; then
+        print_status "Netdata is already installed and running, skipping..."
+        return 0
+    fi
 
-echo "=== System Resources ==="
-echo "Memory Usage:"
-free -h
-echo ""
-echo "Disk Usage:"
-df -h
-echo ""
-echo "CPU Load:"
-cat /proc/loadavg
-echo ""
-
-echo "=== Network ==="
-echo "Network Connections:"
-ss -tuln | head -10
-echo ""
-
-echo "=== Services ==="
-echo "Apache Status: $(systemctl is-active apache2)"
-echo "MySQL Status: $(systemctl is-active mysql)"
-echo "PHP-FPM Status: $(systemctl is-active php8.3-fpm)"
-echo ""
-
-echo "=== Recent Errors ==="
-echo "Apache Errors (last 5):"
-tail -5 /var/log/apache2/error.log 2>/dev/null || echo "No errors"
-echo ""
-EOF
-    
-    chmod +x /usr/local/bin/contabo-monitor.sh
-    
-    # Set up daily monitoring report
-    echo "0 6 * * * root /usr/local/bin/contabo-monitor.sh > /var/log/daily-status.log" >> /etc/crontab
-    
-    print_success "Monitoring configured"
+    if [[ "$MONITORING_TOOL" == "netdata" ]]; then
+        print_status "Installing and configuring Netdata..."
+        bash <(curl -Ss https://my-netdata.io/kickstart.sh) all --default
+        if [ $? -ne 0 ]; then
+            print_error "Failed to install Netdata"
+            exit 1
+        fi
+        systemctl enable netdata
+        systemctl start netdata
+        print_success "Netdata installed and configured"
+    elif [[ "$MONITORING_TOOL" == "prometheus" ]]; then
+        print_status "Installing and configuring Prometheus (not yet implemented)..."
+        print_warning "Prometheus support is not yet implemented."
+    else
+        print_warning "Invalid monitoring tool specified. Skipping monitoring setup."
+    fi
+    print_status "Finished configure_monitoring function"
 }
 
-# Function to setup backups
-setup_backups() {
+# Function to install and configure backups
+configure_backups() {
+    print_status "Starting configure_backups function"
     if [[ "$ENABLE_BACKUPS" != "true" ]]; then
+        print_status "Skipping backup setup..."
         return 0
     fi
-    
-    print_status "Setting up automated backups..."
-    
-    # Create backup script
-    cat > /usr/local/bin/backup-drupal.sh << EOF
+
+    # Check if backup location exists
+    if [ -d "$BACKUP_LOCATION/borg" ]; then
+        print_status "Backup location already initialized, skipping..."
+        return 0
+    fi
+
+    if [[ "$BACKUP_TOOL" == "borgbackup" ]]; then
+        print_status "Installing and configuring BorgBackup..."
+        apt install -y borgbackup
+        if [ $? -ne 0 ]; then
+            print_error "Failed to install BorgBackup"
+            exit 1
+        fi
+        mkdir -p "$BACKUP_LOCATION"
+        # Check if backup location is writable
+        if ! touch "$BACKUP_LOCATION/testfile"; then
+            print_error "Backup location '$BACKUP_LOCATION' is not writable."
+            exit 1
+        else
+            rm -f "$BACKUP_LOCATION/testfile"
+        fi
+        # Initialize Borg repository (if not already initialized)
+        if [ ! -d "$BACKUP_LOCATION/borg" ]; then
+            borg init --encryption=repokey "$BACKUP_LOCATION/borg"
+            if [ $? -ne 0 ]; then
+                print_error "Failed to initialize Borg repository"
+                exit 1
+            fi
+        fi
+        # Create backup script
+        cat > /usr/local/bin/backup_script.sh << EOF
 #!/bin/bash
-# Automated Drupal Backup Script for Contabo VPS
+# Backup script
+BACKUP_LOCATION="$BACKUP_LOCATION"
+BORG_REPO="$BACKUP_LOCATION/borg"
+BORG_PASSPHRASE="" # Set your passphrase here or in environment variable
+SOURCE="/var/www/html" # Source directory to backup
 
-BACKUP_DIR="/var/backups/drupal"
-DATE=\$(date +%Y%m%d_%H%M%S)
-PROJECT_DIR="${PROJECT_DIR}"
-DB_NAME="${DB_NAME}"
-DB_USER="${DB_USER}"
-DB_PASS="${DB_PASS}"
+# Create timestamped archive name
+ARCHIVE_NAME="\$(hostname)-\$(date +%Y-%m-%d_%H-%M-%S)"
 
-# Create backup directory
-mkdir -p \$BACKUP_DIR
+# Create the backup
+borg create --stats --verbose --compression lz4 "\$BORG_REPO::\$ARCHIVE_NAME" "\$SOURCE"
+if [ $? -ne 0 ]; then
+    echo "Backup failed"
+    exit 1
+fi
 
-# Backup database
-mysqldump -u \$DB_USER -p\$DB_PASS \$DB_NAME > \$BACKUP_DIR/database_\$DATE.sql
+# Prune old backups (keep last 7 daily, 4 weekly, 12 monthly)
+borg prune --list --verbose --keep-daily=7 --keep-weekly=4 --keep-monthly=12 "\$BORG_REPO"
+if [ $? -ne 0 ]; then
+    echo "Prune failed"
+    exit 1
+fi
 
-# Backup files
-tar -czf \$BACKUP_DIR/files_\$DATE.tar.gz \$PROJECT_DIR
+# Check the repository
+borg check "\$BORG_REPO"
+if [ $? -ne 0 ]; then
+    echo "Check failed"
+    exit 1
+fi
 
-# Keep only last 7 days of backups
-find \$BACKUP_DIR -name "*.sql" -mtime +7 -delete
-find \$BACKUP_DIR -name "*.tar.gz" -mtime +7 -delete
-
-echo "Backup completed: \$DATE"
+# Display repository information
+borg info "\$BORG_REPO"
+if [ $? -ne 0 ]; then
+    echo "Info failed"
+    exit 1
+fi
 EOF
-    
-    chmod +x /usr/local/bin/backup-drupal.sh
-    
-    # Set up daily backups
-    echo "0 2 * * * root /usr/local/bin/backup-drupal.sh >> /var/log/backup.log 2>&1" >> /etc/crontab
-    
-    print_success "Automated backups configured"
+        chmod +x /usr/local/bin/backup_script.sh
+        if [ $? -ne 0 ]; then
+            print_error "Failed to make backup script executable"
+            exit 1
+        fi
+        # Set up cron job for daily backups
+        (crontab -l 2>/dev/null; echo "0 0 * * * /usr/local/bin/backup_script.sh") | crontab -
+        if [ $? -ne 0 ]; then
+            print_error "Failed to set up cron job"
+            exit 1
+        fi
+        print_success "BorgBackup installed and configured"
+    elif [[ "$BACKUP_TOOL" == "rsync" ]]; then
+        print_status "Installing and configuring Rsync (not yet implemented)..."
+        print_warning "Rsync support is not yet implemented."
+    else
+        print_warning "Invalid backup tool specified. Skipping backup setup."
+    fi
+    print_status "Finished configure_backups function"
 }
 
-# Function to display final information
-display_final_info() {
-    print_header "Contabo VPS Deployment Complete!"
-    
-    echo -e "${GREEN}Your UMD Drupal project is ready on Contabo VPS!${NC}"
-    echo ""
-    echo "=== Access Information ==="
-    echo "Domain: https://${DOMAIN}"
-    echo "Server IP: $(curl -s ifconfig.me)"
-    echo "SSH Access: ssh root@$(curl -s ifconfig.me)"
-    echo ""
-    echo "=== Database Credentials ==="
-    echo "Database: ${DB_NAME}"
-    echo "Username: ${DB_USER}"
-    echo "Password: ${DB_PASS}"
-    echo ""
-    echo "=== Next Steps ==="
-    echo "1. Clone your UMD Drupal project to ${PROJECT_DIR}/drupal-cms"
-    echo "2. Run: cd ${PROJECT_DIR}/drupal-cms && composer install"
-    echo "3. Configure Drupal settings.php with database credentials"
-    echo "4. Import your database if migrating"
-    echo "5. Test the website: https://${DOMAIN}"
-    echo ""
-    echo "=== Management Commands ==="
-    echo "Monitor status: /usr/local/bin/contabo-monitor.sh"
-    echo "Manual backup: /usr/local/bin/backup-drupal.sh"
-    echo "View logs: tail -f /var/log/apache2/error.log"
-    echo ""
-    echo "=== Support ==="
-    echo "Contabo Control Panel: https://my.contabo.com"
-    echo "Server Documentation: /root/contabo-deployment-info.txt"
-    
-    # Save deployment info
-    cat > /root/contabo-deployment-info.txt << EOF
-Contabo VPS Deployment Information
-Generated: $(date)
+# Function to run tests
+run_tests() {
+    print_status "Starting run_tests function"
+    print_status "Running tests..."
 
-Domain: ${DOMAIN}
-Database: ${DB_NAME}
-DB User: ${DB_USER}
-DB Password: ${DB_PASS}
-Project Directory: ${PROJECT_DIR}
+    # Check if necessary tools are installed
+    if ! command -v curl &> /dev/null; then
+        print_error "curl is not installed. Please install it to run tests."
+        exit 1
+    fi
 
-SSL Certificate: Let's Encrypt (auto-renewal enabled)
-Firewall: UFW (SSH, HTTP, HTTPS allowed)
-Security: fail2ban enabled
-Monitoring: Daily reports in /var/log/daily-status.log
-Backups: Daily automated backups in /var/backups/drupal
+    # Test web server
+    print_status "Testing web server..."
+    curl -I http://${DOMAIN}
+    if [ $? -ne 0 ]; then
+        print_error "Web server test failed. Please check your web server configuration."
+        exit 1
+    fi
 
-Contabo Optimizations: Applied
-Performance Tuning: Enabled
-Security Hardening: Configured
-EOF
-    
-    print_success "Deployment information saved to /root/contabo-deployment-info.txt"
+    # Test database connection
+    print_status "Testing database connection..."
+    mysql -u ${DB_USER} -p${DB_PASS} -h localhost -e "SELECT 1"
+    if [ $? -ne 0 ]; then
+        print_error "Database connection test failed. Please check your database configuration."
+        exit 1
+    fi
+
+    print_success "All tests passed!"
+    print_status "Finished run_tests function"
 }
 
 # Main execution
-main() {
-    print_header "Contabo VPS Deployment for UMD Drupal Project"
-    
-    check_root
-    detect_contabo
-    get_user_input
-    install_base_system
-    optimize_for_contabo
-    install_lamp_stack
-    configure_apache
-    configure_mysql
-    optimize_php
-    setup_ssl
-    configure_security
-    deploy_drupal
-    setup_monitoring
-    setup_backups
-    display_final_info
-    
-    print_success "Contabo VPS deployment completed successfully!"
-}
+check_root
+get_user_configuration
+detect_contabo
+install_base_packages
+optimize_contabo
+install_lamp
+configure_apache_vhost
+configure_mysql_server
+optimize_php_settings
+setup_letsencrypt_ssl
+configure_firewall_security
+configure_monitoring
+configure_backups
+run_tests
 
-# Run main function
-main "$@"
+print_success "Contabo VPS deployment completed!"
+
+exit 0
