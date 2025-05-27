@@ -16,6 +16,22 @@ chmod +x scripts/ubuntu_24_04_setup.sh
 ./scripts/ubuntu_24_04_setup.sh
 ```
 
+### For MLM System Deployment
+
+```bash
+# Clone and switch to MLM branch
+git clone -b mlm https://github.com/Ebret/1.git umd-drupal
+cd umd-drupal
+
+# Run Ubuntu setup first
+chmod +x scripts/ubuntu_24_04_setup.sh
+./scripts/ubuntu_24_04_setup.sh
+
+# Then run MLM-specific setup
+chmod +x scripts/mlm_setup.sh
+./scripts/mlm_setup.sh
+```
+
 ### For Contabo VPS Deployment
 
 ```bash
@@ -73,6 +89,24 @@ chmod +x contabo_vps_deploy.sh
 - **Performance monitoring**
 - **Automated backups**
 
+## 🌟 Available Branches
+
+### Master Branch
+- **Purpose**: Production-ready Ubuntu 24.04 compatibility
+- **Features**: Core Drupal setup, deployment automation
+- **Best for**: General Drupal development and hosting
+
+### MLM Branch 🎯
+- **Purpose**: Complete Multi-Level Marketing system
+- **Features**: Unilevel MLM, commission engine, genealogy tree
+- **Best for**: MLM business implementation
+- **Documentation**: `docs/MLM_BRANCH_README.md`
+
+### Ubuntu-24-04-Compatibility Branch
+- **Purpose**: Ubuntu compatibility development
+- **Features**: Compatibility analysis and testing
+- **Best for**: Ubuntu migration and testing
+
 ## 🛠️ Installation Options
 
 ### Option 1: Ubuntu 24.04 Local/VPS Setup
@@ -81,14 +115,21 @@ chmod +x contabo_vps_deploy.sh
 - **Setup time**: 15-30 minutes
 - **Script**: `scripts/ubuntu_24_04_setup.sh`
 
-### Option 2: Contabo VPS Deployment
+### Option 2: MLM System Deployment 🎯
+- **Best for**: MLM business implementation
+- **Requirements**: Ubuntu 24.04 LTS + MLM features
+- **Setup time**: 30-45 minutes
+- **Scripts**: `scripts/ubuntu_24_04_setup.sh` + `scripts/mlm_setup.sh`
+- **Branch**: `mlm`
+
+### Option 3: Contabo VPS Deployment
 - **Best for**: Production hosting
 - **Requirements**: Contabo VPS with Ubuntu 24.04
 - **Setup time**: 15-30 minutes
 - **Cost**: €10-15/month
 - **Script**: `scripts/contabo_vps_deploy.sh`
 
-### Option 3: Manual Installation
+### Option 4: Manual Installation
 - **Best for**: Custom environments
 - **Documentation**: `docs/ubuntu_24_04_compatibility_analysis.md`
 - **Requirements**: PHP 8.3+, MySQL 8.0+, Apache 2.4+
