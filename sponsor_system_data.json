@@ -1,0 +1,68 @@
+{
+    "members": {
+        "ELH000001": {
+            "name": "ExtremeLife Company",
+            "rank": "Diamond",
+            "sponsor": null
+        },
+        "ELH000002": {
+            "name": "Maria Santos",
+            "rank": "VIP",
+            "sponsor": "ELH000001"
+        },
+        "ELH000003": {
+            "name": "Juan Dela Cruz",
+            "rank": "VIP",
+            "sponsor": "ELH000001"
+        },
+        "ELH000004": {
+            "name": "Ana Garcia",
+            "rank": "Distributor",
+            "sponsor": "ELH000002"
+        },
+        "ELH000005": {
+            "name": "Carlos Rodriguez",
+            "rank": "Distributor",
+            "sponsor": "ELH000002"
+        },
+        "ELH000006": {
+            "name": "Sofia Reyes",
+            "rank": "Wholesale",
+            "sponsor": "ELH000004"
+        },
+        "ELH000007": {
+            "name": "Miguel Torres",
+            "rank": "Wholesale",
+            "sponsor": "ELH000004"
+        },
+        "ELH000008": {
+            "name": "Isabella Morales",
+            "rank": "Member",
+            "sponsor": "ELH000006"
+        },
+        "ELH000009": {
+            "name": "Diego Fernandez",
+            "rank": "Member",
+            "sponsor": "ELH000006"
+        },
+        "ELH000010": {
+            "name": "Demo Member",
+            "rank": "Member",
+            "sponsor": "ELH000005"
+        }
+    },
+    "commission_rates": {
+        "Member": 10,
+        "Wholesale": 12,
+        "Distributor": 15,
+        "VIP": 18,
+        "Diamond": 20
+    },
+    "rebate_rates": {
+        "Member": 2,
+        "Wholesale": 3,
+        "Distributor": 4,
+        "VIP": 5,
+        "Diamond": 6
+    }
+}
